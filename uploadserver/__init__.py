@@ -12,13 +12,25 @@ if sys.version_info.major == 3 and sys.version_info.minor < 13:
 else:
     import uploadserver.cgi
 
+NEW_DESTINATION = ""
 COLOR_SCHEME = {
     'light': 'light',
     'auto': 'light dark',
     'dark': 'dark',
 }
 
-def get_upload_page(theme: str) -> bytes:
+def is_subdirectory(subdir, parent):
+    subdir = os.path.abspath(os.path.normpath(subdir))
+    parent = os.path.abspath(os.path.normpath(parent))
+    return os.path.commonpath([subdir, parent]) == parent
+
+def get_upload_page(theme: str, cookie: str) -> bytes:
+    upload_message = f"Uploads will be written to server root"
+    if cookie:
+        if is_subdirectory(cookie, args.directory):
+            message_dir = cookie.replace(args.directory,"")
+            if message_dir != "/":
+                upload_message = f"Uploads will be written to: \"{message_dir}\""
     return bytes('''<!DOCTYPE html>
 <html>
 <head>
@@ -28,6 +40,8 @@ def get_upload_page(theme: str) -> bytes:
 </head>
 <body>
 <h1>File Upload</h1>
+ <h2>'''+upload_message+'''</h2>
+<br />
 <form action="upload" method="POST" enctype="multipart/form-data">
 <input name="files" type="file" multiple />
 <br />
@@ -83,17 +97,24 @@ def get_directory_head_injection(theme: str) -> bytes:
 
 DIRECTORY_BODY_INJECTION = b'''<!-- Injected by uploadserver -->
 <a href="/upload">File upload</a>
-(provided by uploadserver, all files go to server root)
+(files will go to current directory you are viewing)
 <hr>
 <!-- End injection by uploadserver -->
 '''
 
 def send_upload_page(handler: http.server.BaseHTTPRequestHandler):
+    new_base = ""
+    if handler.headers.get("Referer") is not None:
+        url = handler.headers.get("Referer")
+        if url.endswith("/upload") is False:
+            shim = "" if args.directory.endswith("/") else "/"
+            new_base = args.directory + shim + "/".join(url.replace("://","").split("/")[1:])
     handler.send_response(http.HTTPStatus.OK)
+    handler.send_header("Set-Cookie", new_base)
     handler.send_header('Content-Type', 'text/html; charset=utf-8')
-    handler.send_header('Content-Length', len(get_upload_page(args.theme)))
+    handler.send_header('Content-Length', len(get_upload_page(args.theme, new_base)))
     handler.end_headers()
-    handler.wfile.write(get_upload_page(args.theme))
+    handler.wfile.write(get_upload_page(args.theme, new_base))
 
 class PersistentFieldStorage(cgi.FieldStorage):
     # Override cgi.FieldStorage.make_file() method. Valid for Python 3.1 ~ 3.10.
@@ -143,7 +164,15 @@ def receive_upload(handler: http.server.BaseHTTPRequestHandler,
             filename = None
         
         if filename:
-            destination = pathlib.Path(args.directory) / filename
+            new_base = args.directory
+            cookie = handler.headers.get("Cookie") 
+            if cookie is not None:
+                new_base = cookie
+                if is_subdirectory(new_base, args.directory) is False:
+                    print(f"ERROR {new_base} is not a subdir of {args.directory}!! Aborting!",file=sys.stderr)
+                    return result
+            destination = pathlib.Path(new_base) / filename
+            # print("DEBUG: upload destination:", destination)
             if os.path.exists(destination):
                 if args.allow_replace and os.path.isfile(destination):
                     os.remove(destination)
