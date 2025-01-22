@@ -97,7 +97,7 @@ def get_directory_head_injection(theme: str) -> bytes:
 
 DIRECTORY_BODY_INJECTION = b'''<!-- Injected by uploadserver -->
 <a href="/upload">File upload</a>
-(files will go to current directory you are viewing)
+(files will be uploaded to this directory)
 <hr>
 <!-- End injection by uploadserver -->
 '''
