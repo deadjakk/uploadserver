@@ -27,7 +27,7 @@ def is_subdirectory(subdir, parent):
 def get_upload_page(theme: str, cookie: str) -> bytes:
     upload_message = f"Uploads will be written to server root"
     if cookie:
-        if is_subdirectory(args.directory + cookie, args.directory):
+        if is_subdirectory(cookie, args.directory):
             message_dir = cookie.replace(args.directory,"")
             if message_dir != "/":
                 upload_message = f"Uploads will be written to: \"{message_dir}\""
@@ -44,7 +44,6 @@ def get_upload_page(theme: str, cookie: str) -> bytes:
 <br />
 <form action="upload" method="POST" enctype="multipart/form-data">
 <input name="files" type="file" multiple />
-<input type="hidden" name="dest" value="''' + cookie  + '''">
 <br />
 <br />
 <input type="submit" />
@@ -109,10 +108,7 @@ def send_upload_page(handler: http.server.BaseHTTPRequestHandler):
         url = handler.headers.get("Referer")
         if url.endswith("/upload") is False:
             shim = "" if args.directory.endswith("/") else "/"
-            temp_destination = f"{args.directory}/" if args.directory.endswith("/") \
-                    is False else args.directory
             new_base = args.directory + shim + "/".join(url.replace("://","").split("/")[1:])
-            new_base = new_base.replace(temp_destination,"/")
     handler.send_response(http.HTTPStatus.OK)
     handler.send_header("Set-Cookie", new_base)
     handler.send_header('Content-Type', 'text/html; charset=utf-8')
@@ -153,12 +149,6 @@ def receive_upload(handler: http.server.BaseHTTPRequestHandler,
         environ={'REQUEST_METHOD': 'POST'})
     if 'files' not in form:
         return (http.HTTPStatus.BAD_REQUEST, 'Field "files" not found')
-
-    # import IPython; IPython.embed()
-    if 'dest' not in form:
-        new_base = args.directory
-    else:
-        new_base = args.directory + form['dest'].file.read()
     
     fields = form['files']
     if not isinstance(fields, list):
@@ -174,9 +164,13 @@ def receive_upload(handler: http.server.BaseHTTPRequestHandler,
             filename = None
         
         if filename:
-            if is_subdirectory(new_base, args.directory) is False:
-                print(f"ERROR {new_base} is not a subdir of {args.directory}!! Aborting!",file=sys.stderr)
-                return result
+            new_base = args.directory
+            cookie = handler.headers.get("Cookie") 
+            if cookie is not None:
+                new_base = cookie
+                if is_subdirectory(new_base, args.directory) is False:
+                    print(f"ERROR {new_base} is not a subdir of {args.directory}!! Aborting!",file=sys.stderr)
+                    return result
             destination = pathlib.Path(new_base) / filename
             # print("DEBUG: upload destination:", destination)
             if os.path.exists(destination):
